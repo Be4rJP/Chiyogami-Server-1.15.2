@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bea4dev <bea0224@outlook.jp>
+Date: Mon, 13 Jan 2025 05:17:57 +0900
+Subject: [PATCH] fix spark
+
+
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index ab84c9697bc3bbe05d20149005b894916564ab3b..1d442a245fdaca70eb9ffd9059a262d31da2662c 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -479,6 +479,7 @@ public final class CraftServer implements Server {
+         }
+         this.potionBrewer = new io.papermc.paper.potion.PaperPotionBrewer(console); // Paper - custom potion mixes
+         datapackManager = new io.papermc.paper.datapack.PaperDatapackManager(console.getPackRepository()); // Paper
++        world.chiyogami.thread.WorldThreadPool.init();
+         this.spark = new io.papermc.paper.SparksFly(this); // Paper - spark
+     }
+ 
+diff --git a/src/main/java/world/chiyogami/thread/WorldThreadPool.java b/src/main/java/world/chiyogami/thread/WorldThreadPool.java
+index e11677b2741a9650fce512bf6e3d0f8017f752c0..ff14d4a3c73eb1f58615695b600b77371069b354 100644
+--- a/src/main/java/world/chiyogami/thread/WorldThreadPool.java
++++ b/src/main/java/world/chiyogami/thread/WorldThreadPool.java
+@@ -2,21 +2,22 @@ package world.chiyogami.thread;
+ 
+ import ca.spottedleaf.moonrise.common.util.TickThread;
+ import net.minecraft.server.level.ServerLevel;
++import world.chiyogami.config.ChiyogamiConfig;
+ 
+ import java.util.*;
+ import java.util.concurrent.*;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.locks.ReentrantLock;
++import java.util.stream.IntStream;
+ 
+ public class WorldThreadPool {
+     
+     private static ExecutorService executorService = null;
++    public static Set<Thread> allThreads = ConcurrentHashMap.newKeySet();
+     
+     private static int maxPoolSize = 0;
+     
+     private static int previousPoolSize = 0;
+-
+-    private static final AtomicInteger threadCount = new AtomicInteger(0);
+     
+     public static void setMaxPoolSize(int poolSize) {WorldThreadPool.maxPoolSize = poolSize;}
+     
+@@ -36,6 +37,28 @@ public class WorldThreadPool {
+             WORLD_THREAD_HASH_MAP_LOCK.unlock();
+         }
+     }
++
++    public static void init() {
++        int poolSize = ChiyogamiConfig.getMaxWorldThreads();
++        if (poolSize == 0) {
++            poolSize = 4;
++        }
++
++        AtomicInteger threadCount = new AtomicInteger(0);
++
++        executorService = Executors.newFixedThreadPool(poolSize, runnable -> {
++            Thread thread = new TickThread(runnable, "WorldTickThread[" + threadCount.getAndIncrement() + "]");
++            allThreads.add(thread);
++            return thread;
++        });
++        // create all thread
++        Callable<Void> callable = () -> null;
++        try {
++            executorService.invokeAll(IntStream.range(0, poolSize).mapToObj(i -> callable).toList());
++        } catch (InterruptedException e) {
++            throw new RuntimeException(e);
++        }
++    }
+     
+     public static boolean isWorldThread() {
+         return worldThreadHashMap.containsKey(Thread.currentThread());
+@@ -51,17 +74,6 @@ public class WorldThreadPool {
+     public static void shutdown(){if(executorService != null) executorService.shutdown();}
+     
+     public static void doTick(Collection<ServerLevel> serverLevels){
+-        int pool = maxPoolSize > 0 ? maxPoolSize : serverLevels.size();
+-        
+-        if(pool != previousPoolSize){
+-            if(executorService != null) executorService.shutdown();
+-            executorService = Executors.newFixedThreadPool(pool, runnable ->
+-                new TickThread(runnable, "WorldTickThread[" + threadCount.getAndIncrement() + "]")
+-            );
+-            previousPoolSize = pool;
+-            worldThreadHashMap.clear();
+-        }
+-        
+         Set<Future<?>> futures = new HashSet<>();
+         for (ServerLevel serverLevel : serverLevels) {
+             Future<?> future = executorService.submit(serverLevel.worldThread);

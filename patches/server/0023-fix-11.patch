@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bea4dev <bea0224@outlook.jp>
+Date: Mon, 13 Jan 2025 05:39:14 +0900
+Subject: [PATCH] fix #11
+
+
+diff --git a/src/main/java/world/chiyogami/thread/WorldThread.java b/src/main/java/world/chiyogami/thread/WorldThread.java
+index 9517d26c465f25f68d33355e96cd7f1f73ae3eed..6ff13833c811b392194e8450b1b2f84562fc45ef 100644
+--- a/src/main/java/world/chiyogami/thread/WorldThread.java
++++ b/src/main/java/world/chiyogami/thread/WorldThread.java
+@@ -178,38 +178,42 @@ public class WorldThread implements Runnable {
+         }
+         
+         ChiyogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
+-        
+-        try {
+-            TASK_SCHEDULING_LOCK.lock();
+-            targetWorldThread.LOCK.lock();
+-            
+-            //Checks to see if threads waiting to exit are not recursively waiting for themselves.
+-            WorldThread waitForThread = targetWorldThread;
+-            do {
+-                waitForThread = waitForThread.waitFor;
+-            } while (waitForThread != null && waitForThread != this);
+-            
+-            if (waitForThread == null) {
+-                if (targetWorldThread.isProcessingWorldTick) {
+-                    if (this.safeLockCount.get() != 0) {
+-                        throw new IllegalStateException("""
+-                            The current thread has already acquired a lock with WorldThreadSafeLock.
+-                            In this state, it cannot safely wait for another world's task completion.
+-                            This operation cannot be performed because it may cause a deadlock.""");
++
++        if (level != targetWorldThread.level) {
++            try {
++                TASK_SCHEDULING_LOCK.lock();
++                targetWorldThread.LOCK.lock();
++
++                //Checks to see if threads waiting to exit are not recursively waiting for themselves.
++                WorldThread waitForThread = targetWorldThread;
++                do {
++                    waitForThread = waitForThread.waitFor;
++                } while (waitForThread != null && waitForThread != this);
++
++                if (waitForThread == null) {
++                    if (targetWorldThread.isProcessingWorldTick) {
++                        if (this.safeLockCount.get() != 0) {
++                            throw new IllegalStateException("""
++                                The current thread has already acquired a lock with WorldThreadSafeLock.
++                                In this state, it cannot safely wait for another world's task completion.
++                                This operation cannot be performed because it may cause a deadlock.""");
++                        }
++
++                        ChiyogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++                        targetWorldThread.worldTasks.add(worldTask);
++                        this.waitFor = targetWorldThread;
++                    } else {
++                        worldTask.complete();
+                     }
+-                    
+-                    ChiyogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
+-                    targetWorldThread.worldTasks.add(worldTask);
+-                    this.waitFor = targetWorldThread;
+                 } else {
+                     worldTask.complete();
+                 }
+-            } else {
+-                worldTask.complete();
++            } finally {
++                targetWorldThread.LOCK.unlock();
++                TASK_SCHEDULING_LOCK.unlock();
+             }
+-        } finally {
+-            targetWorldThread.LOCK.unlock();
+-            TASK_SCHEDULING_LOCK.unlock();
++        } else {
++            worldTask.complete();
+         }
+         
+         try {
